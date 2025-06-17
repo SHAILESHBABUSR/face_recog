@@ -2,14 +2,17 @@ import cv2
 import numpy as np
 import os
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
+from datetime import datetime
+import csv
+import json
 
 class FaceRecognitionApp:
     def __init__(self, window):
         self.window = window
-        self.window.title("Face Recognition System")
-        self.window.geometry("800x600")
+        self.window.title("Face Recognition Attendance System")
+        self.window.geometry("1000x700")
         
         # Initialize variables
         self.cap = None
@@ -21,6 +24,12 @@ class FaceRecognitionApp:
         self.next_id = 0
         self.recognition_threshold = 70  # LBPH confidence threshold (lower is better match)
         
+        # Attendance tracking variables
+        self.attendance_data = {}
+        self.today_date = datetime.now().strftime("%Y-%m-%d")
+        self.attendance_file = f"attendance_{self.today_date}.csv"
+        self.load_attendance_data()
+        
         # Initialize face detector and recognizer
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         self.face_recognizer = cv2.face.LBPHFaceRecognizer_create()
@@ -29,12 +38,19 @@ class FaceRecognitionApp:
         self.main_frame = ttk.Frame(self.window)
         self.main_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
         
+        # Create left and right frames
+        self.left_frame = ttk.Frame(self.main_frame)
+        self.left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        self.right_frame = ttk.Frame(self.main_frame)
+        self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
         # Create video frame
-        self.video_frame = ttk.Label(self.main_frame)
+        self.video_frame = ttk.Label(self.left_frame)
         self.video_frame.pack(padx=10, pady=10)
         
         # Create control buttons frame
-        self.control_frame = ttk.Frame(self.main_frame)
+        self.control_frame = ttk.Frame(self.left_frame)
         self.control_frame.pack(padx=10, pady=5)
         
         # Create buttons
@@ -44,9 +60,15 @@ class FaceRecognitionApp:
         self.stop_button = ttk.Button(self.control_frame, text="Stop Camera", command=self.stop_camera, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
         
+        self.export_button = ttk.Button(self.control_frame, text="Export Attendance", command=self.export_attendance)
+        self.export_button.pack(side=tk.LEFT, padx=5)
+        
         # Create status label
-        self.status_label = ttk.Label(self.main_frame, text="Camera Status: Not Running")
+        self.status_label = ttk.Label(self.left_frame, text="Camera Status: Not Running")
         self.status_label.pack(pady=5)
+        
+        # Create attendance display
+        self.create_attendance_display()
         
         # Load known faces
         self.load_known_faces()
@@ -57,6 +79,121 @@ class FaceRecognitionApp:
             print("Face recognizer trained.")
         else:
             print("No known faces loaded for training.")
+    
+    def create_attendance_display(self):
+        # Attendance title
+        attendance_title = ttk.Label(self.right_frame, text="Today's Attendance", font=("Arial", 14, "bold"))
+        attendance_title.pack(pady=10)
+        
+        # Create Treeview for attendance
+        columns = ("Name", "Time", "Status")
+        self.attendance_tree = ttk.Treeview(self.right_frame, columns=columns, show="headings", height=15)
+        
+        # Define headings
+        self.attendance_tree.heading("Name", text="Name")
+        self.attendance_tree.heading("Time", text="Time")
+        self.attendance_tree.heading("Status", text="Status")
+        
+        # Define column widths
+        self.attendance_tree.column("Name", width=100)
+        self.attendance_tree.column("Time", width=100)
+        self.attendance_tree.column("Status", width=80)
+        
+        self.attendance_tree.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(self.right_frame, orient=tk.VERTICAL, command=self.attendance_tree.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.attendance_tree.configure(yscrollcommand=scrollbar.set)
+        
+        # Summary frame
+        summary_frame = ttk.Frame(self.right_frame)
+        summary_frame.pack(pady=10, fill=tk.X)
+        
+        self.total_label = ttk.Label(summary_frame, text="Total Present: 0")
+        self.total_label.pack(side=tk.LEFT, padx=10)
+        
+        self.known_count_label = ttk.Label(summary_frame, text=f"Known People: {len(self.name_id_map)}")
+        self.known_count_label.pack(side=tk.RIGHT, padx=10)
+    
+    def load_attendance_data(self):
+        """Load existing attendance data for today"""
+        if os.path.exists(self.attendance_file):
+            try:
+                with open(self.attendance_file, 'r', newline='') as file:
+                    reader = csv.DictReader(file)
+                    for row in reader:
+                        name = row['Name']
+                        time = row['Time']
+                        status = row['Status']
+                        if name not in self.attendance_data:
+                            self.attendance_data[name] = {'time': time, 'status': status}
+            except Exception as e:
+                print(f"Error loading attendance data: {e}")
+    
+    def record_attendance(self, name):
+        """Record attendance for a person"""
+        current_time = datetime.now().strftime("%H:%M:%S")
+        
+        # Only record if not already recorded today or if it's a new entry
+        if name not in self.attendance_data:
+            self.attendance_data[name] = {
+                'time': current_time,
+                'status': 'Present'
+            }
+            
+            # Add to treeview
+            self.attendance_tree.insert('', 'end', values=(name, current_time, 'Present'))
+            
+            # Update summary
+            self.update_summary()
+            
+            # Save to file
+            self.save_attendance_data()
+            
+            # Show notification
+            messagebox.showinfo("Attendance Recorded", f"{name} marked present at {current_time}")
+    
+    def save_attendance_data(self):
+        """Save attendance data to CSV file"""
+        try:
+            with open(self.attendance_file, 'w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(['Name', 'Time', 'Status', 'Date'])
+                for name, data in self.attendance_data.items():
+                    writer.writerow([name, data['time'], data['status'], self.today_date])
+        except Exception as e:
+            print(f"Error saving attendance data: {e}")
+    
+    def update_summary(self):
+        """Update the attendance summary"""
+        total_present = len(self.attendance_data)
+        self.total_label.config(text=f"Total Present: {total_present}")
+        self.known_count_label.config(text=f"Known People: {len(self.name_id_map)}")
+    
+    def export_attendance(self):
+        """Export attendance data to a more detailed format"""
+        try:
+            export_file = f"attendance_report_{self.today_date}.txt"
+            with open(export_file, 'w') as file:
+                file.write(f"ATTENDANCE REPORT - {self.today_date}\n")
+                file.write("=" * 50 + "\n\n")
+                file.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                
+                file.write("ATTENDANCE LIST:\n")
+                file.write("-" * 30 + "\n")
+                for name, data in self.attendance_data.items():
+                    file.write(f"{name}: {data['time']} - {data['status']}\n")
+                
+                file.write(f"\nSUMMARY:\n")
+                file.write("-" * 30 + "\n")
+                file.write(f"Total Present: {len(self.attendance_data)}\n")
+                file.write(f"Total Known People: {len(self.name_id_map)}\n")
+                file.write(f"Attendance Rate: {(len(self.attendance_data)/len(self.name_id_map)*100):.1f}%\n")
+            
+            messagebox.showinfo("Export Successful", f"Attendance report exported to {export_file}")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Error exporting attendance: {e}")
         
     def load_known_faces(self):
         # Dictionary mapping image filenames to names
@@ -80,7 +217,18 @@ class FaceRecognitionApp:
             "WIN_20250614_11_48_29_Pro.jpg": "sharan",
             "WIN_20250614_11_48_27_Pro.jpg": "sharan",
             "WIN_20250614_11_48_24_Pro.jpg": "sharan",
-            "WIN_20250614_11_48_21_Pro.jpg": "sharan"
+            "WIN_20250614_11_48_21_Pro.jpg": "sharan",
+            "WIN_20250617_23_15_01_Pro.jpg": "shailesh",
+            "WIN_20250617_23_15_02_Pro.jpg": "shailesh",
+            "WIN_20250617_23_15_03_Pro.jpg": "shailesh",
+            "WIN_20250617_23_15_04_Pro.jpg": "shailesh",
+            "WIN_20250617_23_15_05_Pro.jpg": "shailesh",
+            "WIN_20250617_23_15_06_Pro.jpg": "shailesh",
+            "WIN_20250617_23_14_55_Pro.jpg": "shailesh",
+            "WIN_20250617_23_14_56_Pro.jpg": "shailesh",
+            "WIN_20250617_23_14_57_Pro.jpg": "shailesh",
+            "WIN_20250617_23_14_58_Pro.jpg": "shailesh",
+            "WIN_20250617_23_14_59_Pro.jpg": "shailesh"
         }
         
         images_dir = "images"
@@ -115,6 +263,11 @@ class FaceRecognitionApp:
                 else:
                     print(f"No face detected in {image_path}")
         
+        # Load existing attendance data into treeview
+        for name, data in self.attendance_data.items():
+            self.attendance_tree.insert('', 'end', values=(name, data['time'], data['status']))
+        
+        self.update_summary()
         self.status_label.config(text=f"Camera Status: Not Running (Loaded {len(self.known_faces)} faces)")
     
     def start_camera(self):
@@ -159,6 +312,8 @@ class FaceRecognitionApp:
                             if _id == predicted_id:
                                 recognized_name = name
                                 color = (0, 255, 0) # Green for recognized
+                                # Record attendance for recognized person
+                                self.record_attendance(recognized_name)
                                 break
                     
                     label = f"{recognized_name} ({confidence:.2f})"

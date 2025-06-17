@@ -1,0 +1,14 @@
+ATTENDANCE REPORT - 2025-06-17
+==================================================
+
+Generated on: 2025-06-17 23:20:57
+
+ATTENDANCE LIST:
+------------------------------
+shailesh: 23:19:30 - Present
+
+SUMMARY:
+------------------------------
+Total Present: 1
+Total Known People: 4
+Attendance Rate: 25.0%
